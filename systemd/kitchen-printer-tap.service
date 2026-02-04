@@ -1,0 +1,60 @@
+[Unit]
+Description=Kitchen Printer Tap - Print Job Capture Service
+Documentation=https://github.com/fairmont/kitchen-printer-tap
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kptap
+Group=kptap
+
+# Binary and configuration
+ExecStart=/usr/local/bin/tapd --config=/etc/kitchen-printer-tap/config.yaml
+
+# Working directory
+WorkingDirectory=/var/lib/kitchen-printer-tap
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RemoveIPC=true
+
+# Allow write access to data directory
+ReadWritePaths=/var/lib/kitchen-printer-tap
+
+# Required for packet capture
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kitchen-printer-tap
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+# Timeout settings
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

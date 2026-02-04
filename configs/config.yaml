@@ -1,0 +1,66 @@
+# Kitchen Printer Tap Configuration
+# See README.md for detailed documentation
+
+# Device identification
+device_id: "kptap-001"
+site_id: "site-001"
+
+# Network interface to capture on (typically the bridge interface)
+interface: "br0"
+
+# Packet capture settings
+capture:
+  # Enable TCP port 9100 capture (raw printing)
+  port_9100_enabled: true
+  # Enable TCP port 515 capture (LPD) - optional
+  port_515_enabled: false
+  # Idle timeout for job boundary detection (800ms recommended)
+  idle_timeout: 800ms
+  # Maximum packet size to capture
+  snap_len: 65535
+  # Enable promiscuous mode
+  promiscuous: true
+  # Capture buffer size in MB
+  buffer_size_mb: 8
+
+# Local storage settings
+storage:
+  # Base path for job storage
+  base_path: "/var/lib/kitchen-printer-tap"
+  # Minimum free disk space in MB (stop writing if below)
+  min_free_mb: 100
+  # Days to retain job files (for cleanup scripts)
+  retention_days: 30
+  # Time window in seconds for reprint detection
+  reprint_window_sec: 300
+
+# Webhook upload settings (optional)
+upload:
+  # Enable upload to webhook
+  enabled: false
+  # Webhook URL for job uploads
+  webhook_url: ""
+  # Bearer token for authentication
+  auth_token: ""
+  # Maximum retry attempts
+  max_retries: 3
+  # Backoff between retries
+  retry_backoff: 5s
+  # HTTP request timeout
+  timeout: 30s
+  # Number of jobs to batch
+  batch_size: 10
+
+# Health endpoint settings
+health:
+  # Enable health endpoint
+  enabled: true
+  # Listen address (localhost only for security)
+  address: "127.0.0.1:8088"
+
+# Metrics logging settings
+metrics:
+  # Enable periodic metrics logging
+  enabled: true
+  # Interval between metrics log lines
+  interval: 60s

@@ -1,0 +1,290 @@
+KITCHEN PRINTER TAP - TEST PLAN
+================================
+
+This document outlines the acceptance tests for the Kitchen Printer Tap MVP.
+
+
+Prerequisites
+-------------
+- Tap device installed inline between switch and printer
+- Bridge configured and active (br0)
+- tapd service configured but may be stopped for some tests
+- Access to POS terminal for sending print jobs
+- SSH access to tap device for verification
+
+
+Test 1: Bridge Functionality (tapd stopped)
+-------------------------------------------
+
+Objective: Verify printing works with bridge but tapd not running
+
+Steps:
+1. Stop tapd service:
+   $ sudo systemctl stop kitchen-printer-tap
+
+2. Verify tapd is not running:
+   $ pgrep tapd
+   (should return nothing)
+
+3. Send 3 print jobs from POS
+
+4. Verify all 3 jobs printed successfully on kitchen printer
+
+Expected Result: All prints complete normally
+Pass Criteria: 100% of prints successful
+
+
+Test 2: Bridge Functionality (tapd running)
+-------------------------------------------
+
+Objective: Verify printing works while tapd is capturing
+
+Steps:
+1. Start tapd service:
+   $ sudo systemctl start kitchen-printer-tap
+
+2. Verify tapd is running:
+   $ systemctl status kitchen-printer-tap
+   (should show "active (running)")
+
+3. Send 3 print jobs from POS
+
+4. Verify all 3 jobs printed successfully on kitchen printer
+
+Expected Result: All prints complete normally with no delay
+Pass Criteria: 100% of prints successful, no noticeable latency
+
+
+Test 3: Capture Verification
+----------------------------
+
+Objective: Verify jobs are captured correctly
+
+Steps:
+1. Note current date for file path
+
+2. Clear existing test data (optional):
+   $ sudo rm -rf /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/
+
+3. Send 10 distinct print jobs from POS
+
+4. Wait 5 seconds for idle timeout to close jobs
+
+5. Count captured jobs:
+   $ ls /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | wc -l
+   (should return 10)
+
+6. Verify each job has both .bin and .json files:
+   $ for f in /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json; do
+       base="${f%.json}"
+       [ -f "${base}.bin" ] && echo "OK: $base" || echo "MISSING BIN: $base"
+     done
+
+7. Verify metadata structure:
+   $ cat /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | head -50
+
+8. Verify byte_len matches actual file size:
+   $ for f in /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json; do
+       base="${f%.json}"
+       json_len=$(jq -r '.byte_len' "$f")
+       file_len=$(stat -c%s "${base}.bin")
+       [ "$json_len" -eq "$file_len" ] && echo "OK: $base" || echo "MISMATCH: $base json=$json_len file=$file_len"
+     done
+
+Expected Result: 10 job files created with matching metadata
+Pass Criteria:
+- 10 .json files
+- 10 .bin files
+- All byte_len values match actual file sizes
+- All required metadata fields present
+
+
+Test 4: Network Failure Resilience
+----------------------------------
+
+Objective: Verify capture continues during network/WAN outage
+
+Steps:
+1. Simulate WAN outage:
+   - Disconnect upstream router/WAN link
+   - Or block outbound traffic: $ sudo iptables -A OUTPUT -j DROP
+
+2. Verify local network still works (ping printer from tap device)
+
+3. Send 10 print jobs from POS
+
+4. Verify all 10 jobs printed successfully
+
+5. Check capture directory:
+   $ ls /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | wc -l
+
+6. Restore network connectivity
+
+7. Verify tapd service still running:
+   $ systemctl status kitchen-printer-tap
+
+Expected Result: All jobs captured despite WAN outage
+Pass Criteria:
+- 100% prints successful
+- All jobs captured to disk
+- Service remains running
+
+
+Test 5: Service Restart Resilience
+----------------------------------
+
+Objective: Verify backlog preserved across service restart
+
+Steps:
+1. Note number of existing captured jobs
+
+2. Send 5 print jobs
+
+3. Restart tapd:
+   $ sudo systemctl restart kitchen-printer-tap
+
+4. Send 5 more print jobs
+
+5. Verify all 10 new jobs captured
+
+6. Verify no data loss from earlier jobs
+
+Expected Result: Service restart does not affect captured data
+Pass Criteria:
+- All jobs from before restart still present
+- All jobs from after restart captured correctly
+
+
+Test 6: Load Test
+-----------------
+
+Objective: Verify system handles burst traffic
+
+Steps:
+1. Start monitoring:
+   $ watch -n1 'systemctl status kitchen-printer-tap | grep -E "Active|Memory|CPU"'
+   (in separate terminal)
+
+2. Send 50 print jobs in rapid succession (within 60 seconds)
+   - Use POS batch print function if available
+   - Or send from multiple POS terminals simultaneously
+
+3. Wait 30 seconds for all captures to complete
+
+4. Count captured jobs:
+   $ ls /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | wc -l
+
+5. Verify no prints were lost at the printer
+
+6. Check system resources:
+   $ top -bn1 | grep tapd
+
+Expected Result: All jobs captured without printer issues
+Pass Criteria:
+- 50 jobs captured
+- 50 prints received by printer
+- CPU usage stays under 80%
+- Memory usage reasonable (<100MB)
+
+
+Test 7: Health Endpoint
+-----------------------
+
+Objective: Verify health endpoint responds correctly
+
+Steps:
+1. Query health endpoint:
+   $ curl -s http://127.0.0.1:8088/health | jq .
+
+2. Verify response contains required fields:
+   - status: "ok"
+   - timestamp
+   - uptime
+   - jobs_captured
+   - bytes_captured
+
+3. Send a print job
+
+4. Query health again and verify jobs_captured incremented
+
+Expected Result: Health endpoint returns valid JSON status
+Pass Criteria:
+- HTTP 200 response
+- Valid JSON with all required fields
+- Counters increment correctly
+
+
+Test 8: Reprint Detection (Optional)
+------------------------------------
+
+Objective: Verify duplicate prints are detected
+
+Steps:
+1. Send a specific print job (note content)
+
+2. Wait 10 seconds
+
+3. Send the exact same print job again
+
+4. Check the second job's metadata:
+   $ cat /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | jq 'select(.tags[] == "reprint")'
+
+Expected Result: Second job tagged as reprint
+Pass Criteria:
+- Second job has "reprint" tag
+- reprint_of_job_id references first job
+
+
+Test 9: Rollback Test
+---------------------
+
+Objective: Verify rollback script works correctly
+
+Steps:
+1. Stop tapd:
+   $ sudo systemctl stop kitchen-printer-tap
+
+2. Run rollback:
+   $ sudo ./scripts/rollback-bridge.sh
+
+3. Verify bridge removed:
+   $ ip link show br0
+   (should fail - device not found)
+
+4. Verify interfaces restored:
+   $ ip link show eth0
+   $ ip link show eth1
+   (both should show state UP)
+
+5. Note: Printing will NOT work in this state
+
+6. Re-run setup:
+   $ sudo ./scripts/setup-bridge.sh
+
+7. Verify printing works again
+
+Expected Result: Clean rollback and recovery
+Pass Criteria:
+- Bridge cleanly removed
+- Setup successfully re-establishes bridge
+- Printing works after re-setup
+
+
+Test Results Summary
+--------------------
+
+| Test | Description                  | Result | Notes |
+|------|------------------------------|--------|-------|
+| 1    | Bridge (tapd stopped)        |        |       |
+| 2    | Bridge (tapd running)        |        |       |
+| 3    | Capture verification         |        |       |
+| 4    | Network failure resilience   |        |       |
+| 5    | Service restart resilience   |        |       |
+| 6    | Load test (50 jobs/60s)      |        |       |
+| 7    | Health endpoint              |        |       |
+| 8    | Reprint detection            |        |       |
+| 9    | Rollback and recovery        |        |       |
+
+Tested by: _________________
+Date: _________________
+Device serial: _________________

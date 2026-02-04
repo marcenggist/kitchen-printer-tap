@@ -1,0 +1,136 @@
+KITCHEN PRINTER TAP - WIRING GUIDE
+===================================
+
+Overview
+--------
+The Kitchen Printer Tap device sits inline between your network switch
+and the kitchen printer, allowing it to passively capture print traffic
+while forwarding all data unchanged to the printer.
+
+
+Network Topology (Before)
+-------------------------
+
+    +--------+          +----------------+
+    | POS/   |  Eth     | Kitchen        |
+    | Switch |--------->| Printer        |
+    +--------+          | (192.168.1.50) |
+                        +----------------+
+
+
+Network Topology (After)
+------------------------
+
+    +--------+          +-------------------+          +----------------+
+    | POS/   |  Eth     | Kitchen Printer   |  Eth     | Kitchen        |
+    | Switch |--------->| Tap Device        |--------->| Printer        |
+    +--------+          |                   |          | (192.168.1.50) |
+                        | eth0 <--br0--> eth1|          +----------------+
+                        +-------------------+
+
+
+Hardware Requirements
+---------------------
+
+Target: Revolution Pi Connect
+- Two Ethernet ports (eth0 and eth1)
+- Debian-based Linux
+- ARM processor
+
+Alternative: Any Linux device with two NICs
+- Intel NUC with USB-Ethernet adapter
+- Raspberry Pi 4 with USB-Ethernet adapter
+- Standard PC with two Ethernet ports
+
+
+Physical Connections
+--------------------
+
+1. eth0 (Uplink Port)
+   - Connect to network switch or directly to POS terminal
+   - This receives traffic FROM the POS network
+   - Cable: Standard Cat5e/Cat6 Ethernet
+
+2. eth1 (Printer Port)
+   - Connect to kitchen printer's Ethernet port
+   - This sends traffic TO the printer
+   - Cable: Standard Cat5e/Cat6 Ethernet
+
+3. Power
+   - Connect appropriate power supply
+   - Revolution Pi: 24V DC
+   - Other devices: As per manufacturer specs
+
+
+Cable Color Coding (Recommended)
+--------------------------------
+
+For easy identification during installation/troubleshooting:
+
+- BLUE cable: eth0 (from switch/POS)
+- GREEN cable: eth1 (to printer)
+- Or label cables clearly with tape/tags
+
+
+IP Address Configuration
+------------------------
+
+The tap device does NOT need an IP address on the bridge interface
+for basic operation. The bridge is completely transparent - the printer
+keeps its existing IP configuration.
+
+If you need remote management of the tap device:
+- Configure a management IP on br0
+- Or use a separate management interface if available
+
+
+LED Indicators (Revolution Pi)
+------------------------------
+
+- PWR: Power status (solid = OK)
+- eth0 Link: Switch connection active
+- eth0 Activity: Traffic from switch
+- eth1 Link: Printer connection active
+- eth1 Activity: Traffic to printer
+
+If both Link LEDs are solid and Activity LEDs blink during printing,
+the device is correctly positioned in the network path.
+
+
+Installation Steps
+------------------
+
+1. Power off the printer
+2. Disconnect printer's Ethernet cable from switch
+3. Connect that cable to tap device eth0 (switch side)
+4. Connect new cable from tap device eth1 to printer
+5. Power on the tap device, wait for boot (30-60 seconds)
+6. Power on the printer
+7. Test print from POS - should work as before
+
+
+Verification
+------------
+
+1. Check link status:
+   $ ip link show eth0
+   $ ip link show eth1
+   Both should show "state UP"
+
+2. Check bridge status:
+   $ bridge link show
+   Should show both eth0 and eth1 attached to br0
+
+3. Test print job capture:
+   $ sudo tcpdump -i br0 -n port 9100
+   Should show packets when printing
+
+
+Safety Notes
+------------
+
+- Always test in non-production environment first
+- Keep rollback script accessible
+- Document existing printer IP configuration before changes
+- If printing stops, run rollback-bridge.sh immediately
+- The bridge forwards traffic even if tapd service is stopped

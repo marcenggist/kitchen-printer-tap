@@ -1,0 +1,314 @@
+KITCHEN PRINTER TAP - TROUBLESHOOTING GUIDE
+============================================
+
+This guide covers common issues and their solutions.
+
+
+CRITICAL: Printing Not Working
+------------------------------
+
+If printing stops working after installing the tap device:
+
+1. IMMEDIATE ROLLBACK:
+   $ sudo systemctl stop kitchen-printer-tap
+   $ sudo ./scripts/rollback-bridge.sh
+
+   Then reconnect printer directly to switch to restore service.
+
+2. If rollback script fails, manually remove bridge:
+   $ sudo ip link set br0 down
+   $ sudo ip link set eth0 nomaster
+   $ sudo ip link set eth1 nomaster
+   $ sudo ip link delete br0
+   $ sudo ip link set eth0 up
+   $ sudo ip link set eth1 up
+
+
+Issue: Bridge Not Forwarding Traffic
+------------------------------------
+
+Symptoms:
+- Printer unreachable from POS
+- No link lights on printer
+
+Diagnosis:
+1. Check bridge status:
+   $ ip link show br0
+   $ bridge link show
+
+2. Check interface status:
+   $ ip link show eth0
+   $ ip link show eth1
+
+3. Check for traffic:
+   $ sudo tcpdump -i br0 -c 10
+
+Solutions:
+- If interfaces not in bridge: re-run setup-bridge.sh
+- If interfaces down: $ sudo ip link set eth0 up && sudo ip link set eth1 up
+- If no link on eth1: check physical cable to printer
+- If no link on eth0: check physical cable to switch
+
+
+Issue: tapd Won't Start
+-----------------------
+
+Symptoms:
+- systemctl status shows failed
+- Service keeps restarting
+
+Diagnosis:
+1. Check logs:
+   $ sudo journalctl -u kitchen-printer-tap -n 50
+
+2. Check binary:
+   $ /usr/local/bin/tapd --version
+
+3. Check capabilities:
+   $ getcap /usr/local/bin/tapd
+
+4. Check config:
+   $ cat /etc/kitchen-printer-tap/config.yaml
+
+Common errors and solutions:
+
+Error: "opening interface br0: br0: No such device"
+Solution: Run setup-bridge.sh first to create bridge
+
+Error: "permission denied"
+Solution:
+- Verify user kptap exists: $ id kptap
+- Set capabilities: $ sudo setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/tapd
+
+Error: "config validation failed"
+Solution: Check config.yaml syntax with: $ yamllint /etc/kitchen-printer-tap/config.yaml
+
+
+Issue: Jobs Not Being Captured
+------------------------------
+
+Symptoms:
+- tapd running but no files in /var/lib/kitchen-printer-tap
+- Health endpoint shows jobs_captured = 0
+
+Diagnosis:
+1. Check traffic on bridge:
+   $ sudo tcpdump -i br0 -n port 9100 -c 10
+
+2. Check tapd is receiving packets:
+   $ sudo journalctl -u kitchen-printer-tap -f
+   (send a print job and watch for log entries)
+
+3. Check BPF filter:
+   $ sudo journalctl -u kitchen-printer-tap | grep "filter"
+
+Solutions:
+- If no traffic on tcpdump: printer not using port 9100, check printer settings
+- If traffic visible but not captured: check interface name in config
+- If traffic on wrong port: enable port_515_enabled for LPD printers
+
+
+Issue: Disk Space Full
+----------------------
+
+Symptoms:
+- Jobs stopping to capture
+- Errors about disk space in logs
+
+Diagnosis:
+$ df -h /var/lib/kitchen-printer-tap
+
+Solutions:
+1. Clean old jobs:
+   $ sudo find /var/lib/kitchen-printer-tap -mtime +30 -delete
+
+2. Increase min_free_mb in config if too conservative
+
+3. Add larger storage device
+
+
+Issue: High CPU Usage
+---------------------
+
+Symptoms:
+- tapd using >50% CPU constantly
+- System sluggish
+
+Diagnosis:
+$ top -p $(pgrep tapd)
+
+Solutions:
+1. Check for excessive traffic (broadcast storms, etc):
+   $ sudo tcpdump -i br0 -c 1000 | wc -l
+   (Should be proportional to actual print jobs)
+
+2. Reduce buffer_size_mb in config
+
+3. Check for many active sessions:
+   $ curl -s http://127.0.0.1:8088/health | jq .active_sessions
+
+
+Issue: Memory Usage Growing
+---------------------------
+
+Symptoms:
+- tapd memory increasing over time
+- Eventually OOM killed
+
+Diagnosis:
+$ watch 'ps aux | grep tapd'
+
+Solutions:
+1. Restart service: $ sudo systemctl restart kitchen-printer-tap
+2. Check for stuck sessions in logs
+3. Reduce idle_timeout if sessions not closing properly
+
+
+Issue: Health Endpoint Not Responding
+-------------------------------------
+
+Symptoms:
+- curl to :8088/health fails
+- "Connection refused"
+
+Diagnosis:
+1. Check service running:
+   $ systemctl status kitchen-printer-tap
+
+2. Check listening:
+   $ ss -tlnp | grep 8088
+
+3. Check config:
+   $ grep -A2 "health:" /etc/kitchen-printer-tap/config.yaml
+
+Solutions:
+- If not listening: verify health.enabled = true in config
+- If wrong address: check health.address in config
+- If firewall blocking: $ sudo iptables -L INPUT
+
+
+Issue: Upload Failing
+---------------------
+
+Symptoms:
+- .upload.json files showing status: "failed"
+- Webhook not receiving data
+
+Diagnosis:
+1. Check upload status files:
+   $ find /var/lib/kitchen-printer-tap -name "*.upload.json" -exec cat {} \;
+
+2. Check connectivity to webhook:
+   $ curl -v <webhook_url>
+
+3. Check logs for upload errors:
+   $ sudo journalctl -u kitchen-printer-tap | grep -i upload
+
+Solutions:
+- Network error: check DNS and firewall rules
+- Auth error: verify auth_token in config
+- Timeout: increase timeout in config
+
+
+Issue: Packets Out of Order / Corrupt Data
+------------------------------------------
+
+Symptoms:
+- Binary files contain garbage
+- sha256 doesn't match expected
+
+Diagnosis:
+1. Check for packet loss:
+   $ sudo journalctl -u kitchen-printer-tap | grep -i "drop\|error\|lost"
+
+2. Check interface errors:
+   $ ip -s link show br0
+
+Solutions:
+1. Increase buffer_size_mb in config
+2. Check for cable issues (replace cables)
+3. Check switch port configuration
+
+
+Issue: Reprint Detection Not Working
+------------------------------------
+
+Symptoms:
+- Duplicate prints not tagged as "reprint"
+
+Diagnosis:
+1. Check reprint_window_sec in config
+2. Check sha256 of similar jobs:
+   $ jq -r '.sha256' /var/lib/kitchen-printer-tap/.../*.json | sort | uniq -c
+
+Solutions:
+- If hashes different: prints contain timestamps or sequence numbers
+- If window too short: increase reprint_window_sec
+
+
+Viewing Logs
+------------
+
+Real-time logs:
+$ sudo journalctl -u kitchen-printer-tap -f
+
+Last 100 lines:
+$ sudo journalctl -u kitchen-printer-tap -n 100
+
+Errors only:
+$ sudo journalctl -u kitchen-printer-tap -p err
+
+Since last boot:
+$ sudo journalctl -u kitchen-printer-tap -b
+
+JSON format (for parsing):
+$ sudo journalctl -u kitchen-printer-tap -o json
+
+
+Useful Commands Reference
+-------------------------
+
+# Service management
+sudo systemctl start kitchen-printer-tap
+sudo systemctl stop kitchen-printer-tap
+sudo systemctl restart kitchen-printer-tap
+sudo systemctl status kitchen-printer-tap
+
+# Bridge status
+ip link show br0
+bridge link show
+brctl show br0
+
+# Network debugging
+sudo tcpdump -i br0 -n port 9100
+sudo tcpdump -i br0 -n port 9100 -w /tmp/capture.pcap
+
+# Health check
+curl -s http://127.0.0.1:8088/health | jq .
+
+# Count captured jobs today
+ls /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json 2>/dev/null | wc -l
+
+# View recent job metadata
+ls -t /var/lib/kitchen-printer-tap/$(date +%Y)/$(date +%m)/$(date +%d)/*.json | head -5 | xargs cat
+
+# Check disk usage
+du -sh /var/lib/kitchen-printer-tap/
+
+
+Contact Support
+---------------
+
+If issues persist after trying the above solutions:
+
+1. Collect diagnostic info:
+   $ sudo journalctl -u kitchen-printer-tap -n 500 > /tmp/tapd-logs.txt
+   $ ip link show > /tmp/interfaces.txt
+   $ bridge link show >> /tmp/interfaces.txt
+   $ cat /etc/kitchen-printer-tap/config.yaml > /tmp/config.txt
+   $ curl -s http://127.0.0.1:8088/health > /tmp/health.json
+
+2. Create support archive:
+   $ tar czvf kitchen-printer-tap-support.tar.gz /tmp/tapd-logs.txt /tmp/interfaces.txt /tmp/config.txt /tmp/health.json
+
+3. Contact support with archive and description of issue
